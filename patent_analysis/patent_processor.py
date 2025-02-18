@@ -381,25 +381,37 @@ class PatentProcessor:
                         countrySelection=selected_countries
                     )
                     
-                    # Updates the patent family record with the selected countries.
-                    new_record.updateFamily()
-
-                    # Processes the family record for the selected countries.
-                    new_result = new_record.process_fami_record(selected_countries)
+                    # # Updates the patent family record with the selected countries.
+                    # new_record.updateFamily()
+                
+                    # Replace updateFamily with _initialize_dataframe
+                    df, dropdown_cc = new_record._initialize_dataframe(country=country)
+                
+                    # Check if DataFrame is valid before proceeding
+                    if df is not None and not df.empty:
+                        print("DataFrame processed successfully.")
+                        
+                        # Assign source_doc_number if missing
+                        df["source_doc_number"] = new_record.source_doc_number  
+    
+                        # Processes the family record for the selected countries.
+                        new_result = new_record.process_fami_record(selected_countries)
                     
-                    if new_result:
-                        new_filtered_app_numbers, source = new_result
-                        # If there is valid data for the selected countries, it updates the patent family tree.
-                        if not new_filtered_app_numbers.empty:
-                            self.familyRoot = new_record.get_family_root()
-                            self.filtered_app_numbers = new_filtered_app_numbers
-                            # Calls the method to create and process the tree for the new selection.
-                            self.create_and_process_tree()
+                        if new_result:
+                            new_filtered_app_numbers, source = new_result
+                            # If there is valid data for the selected countries, it updates the patent family tree.
+                            if not new_filtered_app_numbers.empty:
+                                self.familyRoot = new_record.get_family_root()
+                                self.filtered_app_numbers = new_filtered_app_numbers
+                                # Calls the method to create and process the tree for the new selection.
+                                self.create_and_process_tree()
+                            else:
+                                print("No data to display for selected countries")
                         else:
-                            print("No data to display for selected countries")
+                            print("No data found for selected countries.")
                     else:
-                        print("No data found for selected countries.")
-
+                        print("Error: DataFrame is empty or invalid.")
+                    
                 # Catches any errors during the country selection processing and provides detailed error messages with stack traces.
                 except Exception as e:
                     print(f"Error processing data for selected country: {e}")

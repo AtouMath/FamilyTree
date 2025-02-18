@@ -11,14 +11,19 @@ from pprint import pprint
 import logging
 # logging.basicConfig(level=logging.DEBUG)
 
+# # Set display options for pandas
+# pd.set_option('display.max_rows', None)  # Display all rows
+# pd.set_option('display.max_columns', None)  # Display all columns
+# pd.set_option('display.width', None)  # Avoid line wrapping
+# pd.set_option('display.max_colwidth', None)  # Show full column content
+
 class FamilyRecord:
     """
     Represents family record in the European Patent Office (EPO) database.
     Provides methods to fetch, parse, and process patent family data.
     """
     # Put more fundamental/lower-level methods earlier in the class definition:
-    def __init__(self, reference_type: str, doc_number: str, country: Optional[str] = None, kind: Optional[str] = None, constituents: Optional[str] = None, countrySelection=None, output_type: Optional[str] = None, ):  # xml_tree: Optional[str] = None, 
-        self.reference_type: str = reference_type        
+    def __init__(self, reference_type: str, doc_number: str, country: Optional[str] = None, kind: Optional[str] = None, constituents: Optional[str] = None, countrySelection=None, output_type: Optional[str] = None, ):  
         """
         Initialize the FamilyRecord object.
         
@@ -27,6 +32,9 @@ class FamilyRecord:
         - doc_number (str): The document number.
         - country (str): The country code (e.g., 'EP' for Europe).
         - kind (Optional[str]): The kind code (e.g., 'A' for application, 'B' for publication).
+        - constituents (Optional[str]): Constituents for the OPSClient.
+        - countrySelection (Optional[List[str]]): List of countries for filtering.
+        - output_type (Optional[str]): Output type for the OPSClient.        
         """        
         self.client: OPSClient = OPSClient(key=os.getenv("OPS_KEY"), secret=os.getenv("OPS_SECRET"))
         self.reference_type: str = reference_type
@@ -61,9 +69,11 @@ class FamilyRecord:
         Returns:
         - str: The computed source document number.
         """        
-        source_doc_number = f"{country}{doc_number}"  # Start with concatenating country code and doc_number
+        # source_doc_number = f"{country}{doc_number}"  # Start with concatenating country code and doc_number
+        source_doc_number = f"{country or ''}{doc_number}"  # Start with concatenating country code and doc_number
         if kind:
-            source_doc_number = f"{country}{doc_number}{kind}"
+            # source_doc_number = f"{country}{doc_number}{kind}"
+            source_doc_number = f"{source_doc_number}{kind}"
         return source_doc_number
 
     def _fetch_xml_tree(self, reference_type: str, doc_number: str, country: str, kind: Optional[str] = None, constituents: Optional[str] = None, output_type: Optional[str] = None) -> Optional[str]:
@@ -75,9 +85,11 @@ class FamilyRecord:
         - doc_number (str): The document number.
         - country (str): The country code.
         - kind (Optional[str]): The kind code.
-
+        - constituents (Optional[List[str]]): List of constituents for the OPSClient.
+        - output_type (Optional[str]): Output type for the OPSClient.
+        
         Returns:
-        - str: The fetched XML data as a string.
+        - Optional[str]: The fetched XML data as a string if successful, None otherwise.
         """        
         try:
             input_model = models.Docdb(doc_number, country, kind) if kind else models.Epodoc(f"{country}{doc_number}")
@@ -93,13 +105,24 @@ class FamilyRecord:
 
     # This is a core data-fetching method. It should come before methods that depend on the XML data.
     def get_family_root(self) -> Optional[ET.Element]:
+        """
+        Get the root element of the family XML tree.
+
+        Returns:
+        - Optional[ET.Element]: The root element if XML tree is parsed successfully, None otherwise.
+        """        
         if self.xml_tree is None:
             print("Error: self.xml_tree is not initialized.")
             return None
         return ET.fromstring(self.xml_tree)
 
     def _parse_xml(self) -> Optional[ET.Element]:
-        """Parses XML from self.xml_tree and returns the root element."""
+        """
+        Parses XML from self.xml_tree and returns the root element.
+
+        Returns:
+        - Optional[ET.Element]: The root element if XML tree is parsed successfully, None otherwise.
+        """        
         if self.xml_tree is None:
             print("Error: self.xml_tree is None.")
             return None
@@ -110,13 +133,19 @@ class FamilyRecord:
             return None
 
     def _get_namespace_map(self) -> Dict[str, str]:
-        """Returns the namespace map for XML parsing."""
+        """
+        Returns the namespace map for XML parsing.
+
+        Returns:
+        - Dict[str, str]: The namespace map.
+        """
         return {
             'ops': 'http://ops.epo.org',
             'exchange': 'http://www.epo.org/exchange'
         }
         
-    def get_ns_prefix(self, tag, nsmap):
+    # def get_ns_prefix(self, tag, nsmap):
+    def get_ns_prefix(self, tag: str, nsmap: Dict[str, str]) -> str:
         """
         Resolves the namespace prefix and builds a fully qualified tag.
 
@@ -142,12 +171,27 @@ class FamilyRecord:
         return f"{{{namespace_uri}}}{local_name}"
 
     # Utility for XML parsing. Parses the XML tree and returns a list of family members.
-    def _extract_family_members(self):
-        """Extracts family members from the XML tree."""
+    # def _extract_family_members(self):
+    def _extract_family_members(self) -> List[ET.Element]:
+        """
+        Extracts family members from the XML tree.
+
+        Returns:
+        - List[ET.Element]: List of family member elements.
+        """
         return self.familyRoot.findall(".//{http://ops.epo.org}family-member")
 
     def _parse_application_data(self, family_member, nsmap) -> Tuple[str, Dict]:
-        """Extracts application details such as country, kind, number, and date."""
+        """
+        Extracts application details such as country, kind, number, and date.
+
+        Args:
+        - family_member (ET.Element): The family member element.
+        - nsmap (Dict[str, str]): The namespace map.
+
+        Returns:
+        - Tuple[Optional[str], Dict[str, Any], Optional[str]]: Application number, application data, and kind text.
+        """
         app_number_full = None
         app_data = {}
 
@@ -183,7 +227,7 @@ class FamilyRecord:
                 'app_country': app_country_text,
                 'app_kind': app_kind_text,
                 'app_date': app_date_text,
-                'priority_numbers': set(),  # Placeholder for priority numbers
+                'priority_numbers': set(),   # Placeholder for priority numbers
                 'orap': set(),               # Placeholder for other application references
                 'priority_dates': {},        # Placeholder for priority dates
                 'pub_number': '',
@@ -205,6 +249,16 @@ class FamilyRecord:
             return (2, item)  # Lowest priority
             
     def _parse_priority_claims(self, family_member, nsmap, data, app_number_full, app_data, app_kind_text):
+        """
+        Extracts application details such as country, kind, number, and date.
+
+        Args:
+        - family_member (ET.Element): The family member element.
+        - nsmap (Dict[str, str]): The namespace map.
+
+        Returns:
+        - Tuple[Optional[str], Dict[str, Any], Optional[str]]: Application number, application data, and kind text.
+        """        
         for priority_claim in family_member.findall(f".//{self.get_ns_prefix('exchange:priority-claim', nsmap)}"):
             elements = { 
                 key: priority_claim.find(f".//{self.get_ns_prefix(f'exchange:{key}', nsmap)}")
@@ -212,7 +266,7 @@ class FamilyRecord:
             }
 
             if elements['doc-number'] is not None:
-                priority_doc_number = elements['doc-number'].text
+                priority_doc_number = elements['doc-number'].text                
                 priority_country = elements['country'].text if elements['country'] is not None else 'Unknown'
                 priority_kind = elements['kind'].text if elements['kind'] is not None else ''
                 priority_date = elements['date'].text if elements['date'] is not None else ''
@@ -248,11 +302,27 @@ class FamilyRecord:
                                 app_data['orap'].add(priority_doc_number_full)
                             elif app_kind_text == 'W':
                                 app_data['orap'].add(app_number_full)
-
+                                
                             app_data['priority_numbers'] = sorted(app_data['priority_numbers'], key=self.custom_sort_key)
                             app_data['orap'] = sorted(app_data['orap'], key=self.custom_sort_key)
+                            # print("priority_doc_number + priority_doc_number_full + app_number_full + app_data['priority_numbers'] + app_data['orap']:", priority_doc_number, priority_doc_number_full, app_number_full, app_data['priority_numbers'], app_data['orap'])                            
+                        # elif priority_country != 'EP':
+                        #     app_data['priority_numbers'].add(priority_doc_number_full)                            
+                        #     app_data['orap'].add(priority_doc_number_full) 
+                        # print("priority_doc_number + priority_doc_number_full + app_number_full + app_data['priority_numbers'] + app_data['orap']:", priority_doc_number, priority_doc_number_full, app_number_full, app_data['priority_numbers'], app_data['orap'])
 
-    def _parse_publication_data(self, family_member, nsmap, data, app_number_full, app_data, country_codes):            
+    def _parse_publication_data(self, family_member, nsmap, data, app_number_full, app_data, country_codes):
+        """
+        Parse and process publication data from the family member element.
+
+        Args:
+        - family_member (ET.Element): The family member element.
+        - nsmap (Dict[str, str]): The namespace map.
+        - data (Dict[str, Any]): The data dictionary to update with parsed information.
+        - app_number_full (str): The full application number.
+        - app_data (Dict[str, Any]): The application data dictionary to update.
+        - country_codes (Set[str]): A set to track country codes.
+        """        
         for publication_reference in family_member.findall(f".//{self.get_ns_prefix('exchange:publication-reference', nsmap)}"):
             pub_attrs = {
                 "pub_number": publication_reference.find(f".//{self.get_ns_prefix('exchange:doc-number', nsmap)}"),
@@ -273,6 +343,16 @@ class FamilyRecord:
                 country_codes.add(pub_data["pub_country"])
     
     def _parse_legal_events(self, family_member, nsmap, data, app_number_full, app_data): 
+        """
+        Parse and process legal events from the family member element.
+
+        Args:
+        - family_member (ET.Element): The family member element.
+        - nsmap (Dict[str, str]): The namespace map.
+        - data (Dict[str, Any]): The data dictionary to update with parsed information.
+        - app_number_full (str): The full application number.
+        - app_data (Dict[str, Any]): The application data dictionary to update.
+        """        
         for legal_event in family_member.findall(f".//{self.get_ns_prefix('ops:legal', nsmap)}"):
             legal_event_data = {
                 'legal_event_code': legal_event.attrib.get('code', ''),
@@ -287,7 +367,15 @@ class FamilyRecord:
                 app_data['legal_events'].append(legal_event_data)
 
     def _process_family_member(self, family_member: ET.Element, nsmap: Dict[str, str], data: Dict, country_codes: Set[str]):
-        """Parses and processes data for a single family member."""
+        """
+        Parses and processes data for a single family member.
+
+        Args:
+        - family_member (ET.Element): The family member element.
+        - nsmap (Dict[str, str]): The namespace map.
+        - data (Dict[str, Any]): The data dictionary to update with parsed information.
+        - country_codes (Set[str]): A set to track country codes.
+        """
         app_number_full, app_data, app_kind_text = self._extract_application_data(family_member, nsmap)
     
         if not app_number_full:
@@ -303,7 +391,13 @@ class FamilyRecord:
         self._parse_legal_events(family_member, nsmap, data, app_number_full, app_data)
 
     def _add_missing_countries(self, data: Dict[str, Dict], country_codes: Set[str]):
-        """Ensures all selected countries are represented in the data."""
+        """
+        Ensures all selected countries are represented in the data.
+
+        Args:
+        - data (Dict[str, Dict[str, Any]]): The data dictionary to update with missing countries.
+        - country_codes (Set[str]): A set of existing country codes.
+        """
         missing_countries = set(self.countrySelection) - country_codes
         for country in missing_countries:
             data[f"{country or 'Unknown'}0000000"] = {
@@ -371,7 +465,7 @@ class FamilyRecord:
         country_codes = set()
     
         family_members = self._get_family_members()
-        print(f"Extracted {len(family_members)} family members.")
+        print(f"Extracted {len(family_members)} family members in the parsed XML.")
 
         for family_member in family_members:
             self._process_family_member(family_member, nsmap, data, country_codes)
@@ -388,12 +482,12 @@ class FamilyRecord:
             if self.xml_tree is None:
                 return pd.DataFrame(), []
             # pprint(self.xml_tree[:20000])
-            df, dropdown_cc = self._parse_xml_to_dataframe()
+            self.df, self.dropdown_cc = self._parse_xml_to_dataframe()
             
             # Populate the `data` attribute based on `self.df`
-            if df is not None and not df.empty:
+            if self.df is not None and not self.df.empty:
                 # Populate the `data` attribute based on `df`
-                for _, row in df.iterrows():
+                for _, row in self.df.iterrows():
                     app_number_full = row['app_number']
                     if app_number_full not in self.data:
                         self.data[app_number_full] = {
@@ -401,14 +495,24 @@ class FamilyRecord:
                             'priority_numbers': set(),
                             'priority_dates': {}
                         }
+                print(f"Extracted {len(self.df)} family members in the parsed dataframe.")
             else:
                 print("Error: DataFrame is empty after parsing XML.")
-                    
-            # display(df) # to use in priority for df display
-            return df, dropdown_cc
+                return self.pd.DataFrame(), []
+
+            # Debugging for the environment
+            try:
+                from IPython.display import display
+                # display(self.df)  # to use in priority for df display
+            except ImportError:
+                print(self.df.head())  # Fallback for non-Jupyter environments
+
+            return self.df, self.dropdown_cc
         except Exception as e:
             print(f"Error initializing DataFrame: {e}")
-            return pd.DataFrame(), []
+            import traceback
+            traceback.print_exc()  # This will print the full traceback            
+            return self.pd.DataFrame(), []
             
     def _get_family_members(self) -> List[ET.Element]:
         """Extracts and returns a list of family members from the parsed XML."""
@@ -426,39 +530,55 @@ class FamilyRecord:
         return app_number_full, app_data, app_kind_text            
 
     def get_filtered_application_numbers(self, additional_countries: Optional[str] = None) -> Optional[pd.DataFrame]:
-        # print("get_filtered_application_numbers was called with:", additional_countries)
         if self.df is not None:
             if additional_countries is None:
-                additional_countries = []                
+                additional_countries = []    
+
             if 'app_country' not in self.df.columns:
-                 print("Column 'app_country' is missing from the DataFrame.")
-                 return pd.DataFrame()  # or handle appropriately
-            else:
-                condition_ep = (self.df['app_country'] == 'EP') & (self.df['app_kind'] == 'A')
-                condition_jp = (self.df['app_country'] == 'JP') & (
-                    (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$')
+                print("Column 'app_country' is missing from the DataFrame.")
+                return pd.DataFrame()  # Handle appropriately
+
+            # Define conditions for filtering
+            condition_ep = (self.df['app_country'] == 'EP') & (self.df['app_kind'] == 'A')
+            condition_jp = (self.df['app_country'] == 'JP') & (
+                (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$', regex=True)
+            )
+            condition_us = (self.df['app_country'] == 'US') & (
+                (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$', regex=True)
+            )
+
+            # # Initialize condition_xx safely
+            # condition_xx = False
+            # Initialize condition_xx safely to avoid errors
+            condition_xx = pd.Series(False, index=self.df.index)  
+        
+            # if self.countrySelection:
+            #     condition_xx = self.df['app_country'].isin(self.countrySelection)
+            # if additional_countries:
+            #     condition_xx |= self.df['app_country'].isin(additional_countries)
+        
+            # Handle country selection properly
+            selected_countries = set(self.countrySelection or []) | set(additional_countries)
+            if selected_countries:
+                condition_xx = self.df['app_country'].isin(selected_countries)
+            
+            # Apply filters and create a copy to avoid SettingWithCopyWarning
+            filtered_df = self.df[condition_ep | condition_jp | condition_us | condition_xx].copy()
+
+            # Ensure 'orap' and 'orap_history' columns exist
+            filtered_df.loc[:, 'orap'] = None
+            filtered_df.loc[:, 'orap_history'] = None
+
+            if not filtered_df.empty:
+                filtered_df = filtered_df.apply(
+                    lambda row: sort_orap(row, self.ccw_to_wo_mapping, self.data), 
+                    axis=1
                 )
-                condition_us = (self.df['app_country'] == 'US') & (
-                    (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$')
-                )                
-                condition_xx = self.df['app_country'].isin(self.countrySelection) if self.countrySelection else False
-                
-                # Apply filters
-                filtered_df = self.df[condition_ep | condition_jp | condition_us | condition_xx]
-                if not filtered_df.empty:
-                    # Ensure orap columns are added to the DataFrame
-                    if 'orap' not in filtered_df.columns:
-                        filtered_df['orap'] = None
-                    if 'orap_history' not in filtered_df.columns:
-                        filtered_df['orap_history'] = None
-                        
-                    filtered_df = filtered_df.apply(
-                        lambda row: sort_orap(row, self.ccw_to_wo_mapping, self.data), 
-                        axis=1
-                    )
-                    # display(filtered_df)
-                return filtered_df          
+
+            return filtered_df  
+
         return None
+
     
     def process_fami_record(self, additional_countries: Optional[str] = None) -> None:
         """
@@ -496,47 +616,43 @@ class FamilyRecord:
             # Return the value as is if it's already hashable
             return value
 
-    def updateFamily(self) -> None:
-        """
-        Update the FamilyRecord with new data.
-        """     
-        # print("Update FamilyRecord")
-        try:
-            # Fetch XML Tree
-            self.reference_type, self.doc_number, self.country, self.kind, self.constituents
-            self.xml_tree = self._fetch_xml_tree(self.reference_type, self.doc_number, self.country, self.kind, self.constituents)
-            # self.xml_tree = xml_tree
-            if self.xml_tree is None:
-                return pd.DataFrame(), []
+    # def updateFamily(self) -> None:
+    #     """
+    #     Update the FamilyRecord with new data.
+    #     """     
+    #     # print("Update FamilyRecord")
+    #     try:
+    #         # Fetch XML Tree
+    #         self.xml_tree = self._fetch_xml_tree(self.reference_type, self.doc_number, self.country, self.kind, self.constituents) # self.output_type
+    #         if self.xml_tree is None:
+    #             return pd.DataFrame(), []
 
-            # Parse XML to DataFrame
-            df, dropdown_cc = self._parse_xml_to_dataframe()  # xml_tree
-            display(df)
-            if not df.empty:
-                print("DataFrame is not empty. Processing DataFrame...")
-                self.df = df
-                self.df['source_doc_number'] = self.source_doc_number
-                self.DropdownCC = dropdown_cc
+    #         # Parse XML to DataFrame
+    #         self.df, self.Dropdown_cc = self._parse_xml_to_dataframe()
+    #         # display(self.df)
+    #         if self.df is not None and not self.df.empty: # if not df.empty:
+    #             print("DataFrame is not empty. Processing DataFrame...")
+    #             self.df['source_doc_number'] = self.source_doc_number
 
-                # Convert all non-hashable types in the DataFrame to hashable types
-                for col in self.df.columns:
-                    self.df[col] = self.df[col].apply(self.convert_to_hashable)
+    #             # Convert all non-hashable types in the DataFrame to hashable types
+    #             for col in self.df.columns:
+    #                 self.df[col] = self.df[col].apply(self.convert_to_hashable)
 
-                # Verify if any unhashable objects still exist in the DataFrame
-                for col in self.df.columns:
-                    unhashable_count = self.df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, (list, set))).sum()
-                    if unhashable_count > 0:
-                        print(f"Warning: Column '{col}' still contains {unhashable_count} unhashable items.")
-                        print("Here are some examples:")
-                        print(self.df[col][self.df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, (list, set)))].head())
+    #             # Verify if any unhashable objects still exist in the DataFrame
+    #             for col in self.df.columns:
+    #                 unhashable_count = self.df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, (list, set))).sum()
+    #                 if unhashable_count > 0:
+    #                     print(f"Warning: Column '{col}' still contains {unhashable_count} unhashable items.")
+    #                     print("Here are some examples:")
+    #                     print(self.df[col][self.df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, (list, set)))].head())
 
-                # Attempt to drop duplicates
-                print("Dropping duplicates...")
-                self.df = self.df.drop_duplicates()
+    #             # Attempt to drop duplicates
+    #             print("Dropping duplicates...")
+    #             self.df = self.df.drop_duplicates()
 
-        except Exception as e:
-            print(f"Error updating FamilyRecord: {e}")
-            import traceback
-            print("Traceback:")
-            traceback.print_exc()  # This will print the full traceback including the line number
+    #     except Exception as e:
+    #         print(f"Error updating FamilyRecord: {e}")
+    #         import traceback
+    #         print("Traceback:")
+    #         traceback.print_exc()  # This will print the full traceback including the line number
 
