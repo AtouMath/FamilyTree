@@ -19,7 +19,7 @@ def convert_japanese_priority_number(priority_number: str) -> str:
 
     return priority_number
 
-def sort_orap(row, jpw_to_wo_mapping, data):
+def sort_orap(row, ccw_to_wo_mapping, data):
     priority_numbers = row['priority_numbers']
     # print("priority_numbers:", priority_numbers)
     app_number_full = row['app_number']
@@ -29,8 +29,8 @@ def sort_orap(row, jpw_to_wo_mapping, data):
     
     orap_date_map = {}
     for num in orap_list:
-        if num in jpw_to_wo_mapping:
-            wo_number, wo_date = jpw_to_wo_mapping[num]
+        if num in ccw_to_wo_mapping:
+            wo_number, wo_date = ccw_to_wo_mapping[num]
             orap_date_map[wo_number] = wo_date
         else:
             priority_dates = row['priority_dates']
@@ -46,35 +46,42 @@ def sort_orap(row, jpw_to_wo_mapping, data):
             
             orap_date_map[num] = priority_dates.get(num)
 
+    # **Filter out None values before sorting**
+    filtered_orap_dates = {k: v for k, v in orap_date_map.items() if v is not None}
+
+    # Handle case where all dates were None
+    if not filtered_orap_dates:
+        row['orap'] = ''
+        row['orap_history'] = []
+        return row
+        
     sorted_orap = sorted(
-        orap_date_map.items(),
-        key=lambda x: pd.to_datetime(x[1], errors='coerce'),
+        filtered_orap_dates.items(),  # Use filtered dictionary
+        key=lambda x: pd.to_datetime(x[1], errors='coerce')
     )
     
     # print("sorted_orap:", sorted_orap)
-
-    # Update `row['orap']` iteratively
-    if sorted_orap:     
-        for orap, date in sorted_orap:
-            # print("last priority numbers:", priority_numbers[-1])
-            # print("app_number_full:", app_number_full)
-            if 'W' not in orap:
-                # Ensure there are at least two elements in priority_numbers
-                if len(priority_numbers) > 1:
-                    if priority_numbers[-1] == row['app_number']:
-                        row['orap'] = priority_numbers[-2]
-                    else:
-                        row['orap'] = priority_numbers[-1]
-                elif len(priority_numbers) == 1:
-                    row['orap'] = priority_numbers[-1]
+           
+    # Update `row['orap']` iteratively  
+    for orap, date in sorted_orap:
+        # print("last priority numbers:", priority_numbers[-1])
+        # print("app_number_full:", app_number_full)
+        if 'W' not in orap:
+            # Ensure there are at least two elements in priority_numbers
+            if len(priority_numbers) > 1:
+                if priority_numbers[-1] == row['app_number']:
+                    row['orap'] = priority_numbers[-2]
                 else:
-                    row['orap'] = ''
+                    row['orap'] = priority_numbers[-1]
+            elif len(priority_numbers) == 1:
+                row['orap'] = priority_numbers[-1]
             else:
-                row['orap'] = orap  # Update row's `orap`
-            # print(f"Updated row['orap']: {row['orap']}")
-            # print()
-    else:
-        row['orap'] = ''
+                row['orap'] = ''
+        else:
+            row['orap'] = orap  # Update row's `orap`
+        # print(f"Updated row['orap']: {row['orap']}")
+        # print()
+
         
     # Ensure row['orap_history'] is updated
     unique_orap_set = set()

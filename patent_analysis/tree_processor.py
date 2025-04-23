@@ -47,81 +47,111 @@ class TreeProcessor:
         self.df = df  # A pandas DataFrame containing filtered publication numbers.
         # An instance of OPSClient, initialized with API credentials.
         self.client: OPSClient = OPSClient(key=os.getenv("OPS_KEY"), secret=os.getenv("OPS_SECRET"))        
-        self.familyRoot = familyRoot  # Represents the root of the patent family.
-        
-        self.tree_file_path = self.tree.recInp + '.txt'  # The file path to save the output tree data.
-        self.workdir = '/home/jovyan/tip-data-ops/docs/patent_analysis/'  # The directory where files will be stored.
+        self.familyRoot = familyRoot  # Represents the root of the patent family.        
+        self.workdir = "./output" # self.workdir = '/home/jovyan/DiviTree-older working version 2/output/'  # The directory where files will be stored.        
         os.makedirs(self.workdir, exist_ok=True)
-        self.tree_file_path = os.path.join(self.workdir, self.tree_file_path)
-    
-    def process_tree_file(self):
+        self.application_tree_file_path = os.path.join(self.workdir, f"{self.tree.recInp}_first_output.txt")
+        self.priority_tree_file_path = os.path.join(self.workdir, f"{self.tree.recInp}_second_output.txt")        
+
+    from collections import Counter
+
+    def process_tree(self, mode):
         """
-        This method generates a text file summarizing divisional patent applications from the tree data.
-        It counts occurrences of country codes in the application list (listAPs),
-        writes a tree file that iterates through each level of the root structure.
-        calls the tree_generation() method recursively to build the tree structure for each application.
-        logs warnings and errors if any issues are encountered.
-        This method processes the patent tree structure and generates a summary text file detailing divisional applications.
-        The method iterates over the root elements, processes the root nodes, and recursively generates tree 
-        structures for application nodes.
+        Processes a tree structure for either application or priority trees, generating a summary text file.
+
+        Args:
+            mode (str): Determines the tree type, either "application" or "priority".
 
         Returns:
             dict: The last processed root node.
-        """       
+        """
         try:
-            # If listORAPs is None, it returns early to avoid errors.
+            # print("process_tree: self.listORAPs:", self.listORAPs )
             if self.listORAPs is None:
                 print("Error: listORAPs is None")
                 return
 
-            if not self.listORAPs:
-                print("Warning: listORAPs is empty")
+            if not self.listAPs:
+                print("Error: listAPs is None or empty")
+                return
 
             listApCCs = ['WO' if len(word) > 2 and word[2] == 'W' else word[:2] for word in self.listAPs]
+            country_code_counts = Counter(listApCCs)  # Count occurrences of each country code
 
-            # Count occurrences of each country code        
-            country_code_counts = Counter(listApCCs)
-            
             # creates a formatted comment for divisional applications, including the number of applications per country code.
             applicationComment = 'including: ' + ' + '.join(
                 f'{count} {code}{"s" if count > 1 else ""}' for code, count in country_code_counts.items()
             )
             tree_comment = f'Divisional Applications ({self.df.shape[0]}) {applicationComment}'
 
-            # The method writes this information to a tree file for later inspection.
-            with open(self.tree_file_path, 'w') as tree_file:
-                tree_file.write(f'Starting Divitree with {self.tree.recInp}\n')       
-                # tree_file.write(f'{tree_comment}\n')
+            if not self.application_tree_file_path or not self.priority_tree_file_path:
+                raise ValueError("Error: Tree file paths are None or invalid.")
 
-                processed_apps = set()
+            processed_nodes = set()
+            written_aps = set()
+            
+            file_path = self.application_tree_file_path if mode == "application" else self.priority_tree_file_path
+            
+            # The method writes this information to a tree file for later inspection.
+            node_key = 'root_ap' if mode == "application" else 'root_pr'  # node_key = 'root_ap' 
+            
+            start_message = "Starting Extended Family Divitree Generation with" if mode == "application" else "Starting Simple Family DiviTree Generation"
+        
+            with open(file_path, 'w') as tree_file:
+                tree_file.write(f'\n{start_message} {self.tree.recInp}\n')
+                tree_file.write(f'{tree_comment}\n\n') #  ({"default" if mode == "application" else "alternative"} tree)\n\n')
+
                 for r in range(len(self.root) + 1, 0, -1):
                     current_root = self.root.get(r, {})
-                    # print(f"root[{r}] =", current_root)
-                    # print("root.an[{r}] =", current_root.get('root_an', ''))            
-                    # print("root.ap[{r}] =", current_root.get('root_ap', ''))
-                    # print("root.pn[{r}] =", current_root.get('root_pn', ''))                
-                    # print("root.pr[{r}] =", current_root.get('root_pr', ''))
-                    # print("root.orap[{r}] =", current_root.get('root_orap', ''))               
-                    # print("root.evnt[{r}] =", current_root.get('root_evnt', ''))
                 
                     if not isinstance(current_root, dict):
                         print(f"Warning: Expected dict for root at {r}, got {type(current_root)}")
                         continue
-                    
-                    self.process_root(current_root, tree_file)
 
-                    if self.listORAPs:
-                        my_node = current_root.get('root_ap', '')
+                    my_node = current_root.get(node_key, [])
+                    root_an = current_root.get('root_an', '')  
+                    root_ap = current_root.get('root_ap', '')                    
+                    root_orap = current_root.get('root_orap', '')
+                    # if root_orap in self.listORAPs:
+                    #     words = self.listORAPs
+                    #     words.remove(root_orap)
+                    #     self.listORAPs = " ".join(words)
+                        
+                    # root_evnt = current_root.get('root_evnt', '')  
+                    
+                    if mode == "priority" and not isinstance(my_node, list):
+                        my_node = [my_node] if my_node else []
                         # print("my_node:", my_node)
-                        if my_node.strip() and my_node not in processed_apps:
-                            # print(f"Generating tree for: {my_node} at level 1")
-                            self.tree_generation(my_node, 1, tree_file, processed_apps)
+                
+                    for node in (my_node if isinstance(my_node, list) else [my_node]):
+                        # print(f"DEBUG: Processing priority mode - node {node}, root_ap {root_ap}, root_orap {root_orap}")
+                        if isinstance(node, str) and node not in processed_nodes:
+                            self.process_root(current_root, tree_file, processed_nodes, mode, written_aps)
+                            # print(f"Generating tree for: {node} at level 1")
+                            if mode == "application":                                
+                                self.generate_tree(node, 1, tree_file, processed_nodes, current_root, mode)
+                            elif mode == "priority":
+                                # Process each node (which could be a priority)
+                                for node2 in (my_node if isinstance(my_node, list) else [my_node]):
+                                    if isinstance(node2, str) and node2 not in processed_nodes:
+                                        self.generate_tree(node2, 1, tree_file, processed_nodes, current_root, mode)
+                                # Ensure root_ap is processed if it's not already in processed_nodes
+                                if root_ap and root_ap not in processed_nodes:
+                                    self.generate_tree(root_ap, 1, tree_file, processed_nodes, current_root, mode)
+                                # # New addition: process root_orap if relevant
+                                if root_orap and root_orap not in processed_nodes:
+                                    self.generate_tree(root_orap, 1, tree_file, processed_nodes, current_root, mode)
+                                # print(f"root_ap: {root_ap}, root_orap: {root_orap}")
+                        # else:
+                        #     print(f"Skipping node {node} (already processed or invalid)")
+    
+            print(f'Tree processing completed.\n')
         except Exception as e:
-            print(f"Error during process_tree_file: {e}")
+            print(f"Error during process_tree ({mode}): {e}")
 
         return current_root
         
-    def process_root(self, current_root, tree_file):
+    def process_root(self, current_root, tree_file, processed_files, mode, written_aps):
         """
         This method processes the current root node of the tree and writes its information into the tree file:
         it identifies key attributes like root_an (application number) and root_ap (application ID).
@@ -136,30 +166,39 @@ class TreeProcessor:
             tree_file (file): The file object to which the processed tree information is written.
         """
         
-        root_an = current_root.get('root_an', '')
-        root_r_word_1 = current_root.get('root_ap', '')
+        root_an = current_root.get('root_an', '').strip()
+        root_ap = current_root.get('root_ap', '').strip()
+        root_pr = current_root.get('root_pr', '')     
         rec_inp_right_6 = self.tree.recInp[-6:]  # Get the last 6 characters of recInp
-        
+        # print("root_an, root_ap, root_pr, processed_files:", root_an, root_ap, root_pr, processed_files)
+            
         # The method processes root attributes and writes them to the tree file in a hierarchical format.
-        if root_r_word_1.strip():            
-            if root_r_word_1.endswith(rec_inp_right_6):
-                # print("{root_r_word_1}:", {root_r_word_1})
-                tree_file.write(f', **{root_r_word_1}** \n')
+        
+        if root_ap and root_ap not in processed_files and root_ap not in written_aps:
+            if root_ap.endswith(rec_inp_right_6):
+                # print("{root_ap}:", {root_ap})
+                tree_file.write(f', **{root_ap}** \n')
             elif 'EP' not in root_an and root_an.endswith(rec_inp_right_6):
-                if root_an:
-                    # print("{root_an}, {root_r_word_1}:", {root_an}, {root_r_word_1})
-                    tree_file.write(f', {root_an} / {root_r_word_1} \n') # Write with a leading comma
+                if root_an and root_an != root_ap:
+                    # print("{root_an}, {root_ap}:", {root_an}, {root_ap})
+                    # tree_file.write(f', {root_ap} \n') # Write with a leading comma
+                    tree_file.write(f', {root_an} / {root_ap} \n') # Write with a leading comma                
                 else:
-                    # print("{root_r_word_1}:", {root_r_word_1})
-                    tree_file.write(f', {root_r_word_1} \n') # Write with a leading comma
+                    # print("{root_ap}:", {root_ap})
+                    tree_file.write(f', {root_ap} \n') # Write with a leading comma
             else:
-                if root_an:
-                    # print("{root_an}, {root_r_word_1}:", {root_an}, {root_r_word_1})                    
-                    tree_file.write(f', {root_an} / {root_r_word_1} \n') # Write with a leading comma
+                if root_an and root_an != root_ap:
+                    # print("{root_an}, {root_ap}:", {root_an}, {root_ap})                    
+                    tree_file.write(f', {root_an} / {root_ap} \n') # Write with a leading comma
+                    # tree_file.write(f', {root_ap} \n') # Write with a leading comma                    
                 else:
-                    # print("{root_r_word_1}:", {root_r_word_1})                    
-                    tree_file.write(f', {root_r_word_1} \n') # Write with a leading comma
+                    # print("{root_ap}:", {root_ap})                    
+                    tree_file.write(f', {root_ap} \n') # Write with a leading comma
 
+            if mode == "priority":
+                # Add root_ap to the set of written application IDs
+                written_aps.add(root_ap)
+    
             # Mapping initFlag values to corresponding methods
             process_methods = {
                 'Show_priorities': self.process_priorities,
@@ -177,164 +216,142 @@ class TreeProcessor:
             if self.initFlag in process_methods:
                 # print("self.initFlag in process_root:", self.initFlag)
                 process_methods[self.initFlag](current_root, 1, tree_file)
-
-    def clean_orap_list(self, orap_list):
-        """
-        Clean and remove duplicates from a list of original application identifiers.
-        It removes date strings (in the format YYYYMMDD) using a regular expression.
-        This method also strips any date information from the entries and splits multi-entry strings.
-
-        Args:
-            orap_list (list): List of original application identifiers (orap).
-
-        Returns:
-            list: A cleaned and deduplicated list of original application identifiers.
-        """
-        # The regular expression ensures that dates are removed from the original application list for cleaner output.
-        date_pattern = re.compile(r'\(\d{8}\)')
-        cleaned_orap_list = []
-        for orap_entry in orap_list:
-            # Remove dates from the orap entries
-            cleaned_entry = date_pattern.sub('', orap_entry).strip()
-            # It splits entries on commas or semicolons to handle multiple entries in a single string.
-            parts = re.split(r'[,;]', cleaned_entry)
-            for part in parts:
-                part = part.strip()
-                if part and part not in cleaned_orap_list:
-                    cleaned_orap_list.append(part)
-        # The cleaned entries are returned as a de-duplicated list.
-        return cleaned_orap_list
-
-    def tree_generation(self, my_node, level, tree_file, processed_apps):
-        """
-        This recursive method generates the tree structure for a given node:
-        It adds each node to a processed_apps set to prevent reprocessing.
-        For each level in the tree, it writes the node’s data to the tree file, including sibling nodes.
-        It also invokes methods like process_priorities() or process_publications() depending on the initFlag.
-        If a child node is found, it recursively calls itself to generate the tree for that child.
         
+    def generate_tree(self, my_node, level, tree_file, processed_nodes, current_root, mode="application"):
+        """
         Recursively generate a tree structure by navigating through nodes and writing them to the tree file.
-        This method tracks processed applications and ensures no duplicates are included.
+        This method tracks processed nodes and ensures no duplicates are included.
 
         Args:
             my_node (str): Identifier of the current node.
             level (int): Depth level for indentation.
             tree_file (file): File object for writing tree structure.
-            processed_apps (set): Set of already processed application nodes.
+            processed_nodes (set): Set of already processed application nodes.
+            current_root (dict): Root node details (e.g., 'root_an' and 'root_ap').
+            mode (str): Type of tree ("application" or "priority").
         """
         # Check if the current node has already been processed, avoid reprocessing.
-        if my_node in processed_apps:
-            return  # Exit the function early if node has been processed.
+        # print("my_node, processed_nodes:", my_node, processed_nodes)
+        if my_node in processed_nodes:
+            return  
 
-        # Mark the current node as processed to avoid revisiting.
-        processed_apps.add(my_node)
-        
-        # Increment the level for indentation purposes (one level deeper).
+        # Mark the current node as processed.
+        processed_nodes.add(my_node)
+
+        # Increment the level for indentation.
         level += 1
-        
-        # Dictionary to track sibling nodes at this level, starting with an index '0'.
+
+        # Dictionary to track sibling nodes.
         sibling = {'0': 0}
+        # print("my_node:", my_node)
+        
+        # Variable to track the previous my_node
+        # prev_my_node = None
 
-        # Loop through the nodes in reverse order.
+        # Iterate through tree data in reverse order.
         for t in range(int(self.tree.orapNb) - 1, -1, -1):
-            # print(f"t: {t} self.tree.ap[t]: {self.tree.ap[t]}, self.tree.pn[t] {self.tree.pn[t]}, tree.orap[t] {self.tree.orap[t]}, my_node: {my_node}")
-            # Check if the current node is a child in the tree data.
-            if my_node in self.tree.orap[t]:
-                if self.tree.orap[t] != '':
-                    # # Check the type and value of self.tree.pr[t]
-                    # print(f"Type of self.tree.pr[{t}]:", type(self.tree.pr[t]))
-                    # print(f"Value of self.tree.pr[{t}]:", self.tree.pr[t])
+            orap_list = set(self.tree.orap[t].split(',')) if isinstance(self.tree.orap[t], str) else set()
 
-                    # if self.tree.pr[t] != []:
-                    #     print("self.tree.ap[t]:", self.tree.ap[t])
-                    #     print("self.tree.pr[t]:", self.tree.pr[t])
-                    
-                    # Collect sibling data (application number, publication number, priorities, etc.)
-                    s = sibling['0'] + 1  # Increment sibling index for each valid sibling node.
-                    sibling[s] = {
-                        'an': '',  # Application number (not directly used here)
-                        'ap': self.tree.ap[t].split()[0] if isinstance(self.tree.ap[t], str) else '',
-                        'pn': self.tree.pn[t].split()[0] if isinstance(self.tree.ap[t], str) else '', 
-                        'pr': list(self.tree.pr[t]) if hasattr(self.tree, 'pr') and isinstance(self.tree.pr[t], (list,tuple)) else '',
-                        'orap': self.tree.orap[t],
-                        's': self.tree.ap[t].split()[0] if isinstance(self.tree.ap[t], str) else '',
-                        'evnt': self.tree.evnt[t] if hasattr(self.tree, 'evnt') and isinstance(self.tree.evnt[t], list) else []
-                    }
-                    # print("sibling[s]:", sibling[s])
-                    # print("t:", t)
-                    # print(f"Found child: {sibling[s]['ap']}")
-                    # print(f"Found publication: {sibling[s]['pn']}")
-                    # print(f"Found prio: {sibling[s]['pr']}")
-                    # print(f"Found parent: {sibling[s]['orap']}")
-                    # print(f"Found evnt: {sibling[s]['evnt']}")
-                    # print()
-                    sibling['0'] = s  # Update sibling count.
+            if my_node in orap_list and self.tree.orap[t] != '': # if my_node in self.tree.orap[t] and self.tree.orap[t] != '': # and my_node in self.listORAPs:
 
-        # If siblings are found, process them.
-        if sibling['0'] > 0:
-            rec_inp_right_6 = self.tree.recInp[-6:]
-            
-            # Loop through all siblings found at the current level.
-            for s in range(1, sibling['0'] + 1):
-                # Write sibling data to the file with appropriate indentation.
-                if 's' in sibling[s] and sibling[s]['s'].find(rec_inp_right_6) >= 0:
-                    tree_file.write(', ' * level + f'{sibling[s]["s"]}' + '\n')
-                elif 's' in sibling[s] and 'EP' not in sibling[s]['s'] and sibling[s]['an'].find(rec_inp_right_6) >= 0:
-                    tree_file.write(', ' * level + f'{sibling[s]["an"]}' + '\n')
-                else:
-                    tree_file.write(', ' * level + f'{sibling[s]["s"]}' + '\n')
+                # # Check if previous my_node also appears in the same orap list (if available)
+                # if prev_my_node and prev_my_node not in orap_list:
+                #     print(f"Warning: {prev_my_node} is missing in orap[{t}] ({orap_list}), but it should be linked to the same child.")
+ 
+                # print(f"t: {t} tree.orap[t] {self.tree.orap[t]}, my_node: {my_node}")  
+                # print(f"t: {t} self.tree.evnt[t]: {self.tree.evnt[t]}")
+                # # Check the type and value of self.tree.pr[t]
+                # print(f"Type of self.tree.pr[{t}]:", type(self.tree.pr[t]))
+                # print(f"Value of self.tree.pr[{t}]:", self.tree.pr[t])
 
-                # Mapping initFlag values to corresponding methods
-                process_methods = {
-                    'Show_publications': self.process_publications, 
-                    'Show_citations': self.process_citations,
-                    'Show_classifications': self.process_classifications,
-                    'Show_parties': self.process_parties,
-                    'Show_images': self.process_images                    
+                # if self.tree.pr[t] != []:
+                #     print("self.tree.ap[t]:", self.tree.ap[t])
+                #     print("self.tree.pr[t]:", self.tree.pr[t])                
+                s = sibling['0'] + 1
+                sibling[s] = {
+                    'an': '',
+                    'ap': self.tree.ap[t].split()[0] if isinstance(self.tree.ap[t], str) else '',
+                    'pn': self.tree.pn[t].split()[0] if isinstance(self.tree.pn[t], str) else '',
+                    'pr': list(self.tree.pr[t]) if hasattr(self.tree, 'pr') and isinstance(self.tree.pr[t], (list, tuple)) else '',
+                    'orap': self.tree.orap[t],
+                    's': self.tree.ap[t].split()[0] if isinstance(self.tree.ap[t], str) else '',
+                    'evnt': self.tree.evnt[t] if hasattr(self.tree, 'evnt') and isinstance(self.tree.evnt[t], list) else []
                 }
+                # print("sibling[s]:", sibling[s])
+                # print("t:", t)
+                # print(f"Found child: {sibling[s]['ap']}")
+                # print(f"Found publication: {sibling[s]['pn']}")
+                # print(f"Found prio: {sibling[s]['pr']}")
+                # print(f"Found parent: {sibling[s]['orap']}")
+                # print(f"Found evnt: {sibling[s]['evnt']}")
+                # print()
+                # Update prev_my_node for next iteration
+                # prev_my_node = sibling[s]['s'] # my_node
+                # Recursively process children if not already processed
+                
+                sibling['0'] = s                
 
-                # Call specific methods based on the initFlag.
-                if self.initFlag == 'Show_priorities':
-                    self.process_priorities(sibling[s]['pr'], level, tree_file)
-                elif self.initFlag == 'Show_applications':
-                    self.process_applications(sibling[s]['ap'], level, tree_file)
-                elif self.initFlag == 'Show_parents':
-                    self.process_parents(sibling[s]['orap'], level, tree_file)
-                elif self.initFlag == 'Show_legal_events' and sibling[s]['evnt']: # and sibling[s]['evnt'] != []
-                    # tree_file.write(', ' * (level + 1) + "legal_events:\n")  # Add header for legal events
-                    
-                    # for event in sibling[s]['evnt']:
-                    #     event_code = event.get('code', 'N/A')
-                    #     event_desc = event.get('desc', 'No Description')
-                    #     event_date = event.get('dateMigr', 'Unknown Date')
-                    #     event_texts = event.get('texts', '').split('|')  # Split multiple texts if needed
+        # print()
+        
+        # If siblings exist, process them.
+        if sibling['0'] > 0:
+            rec_inp_right_6 = str(self.tree.recInp)[-6:]
 
-                    #    # Write formatted event information
-                    #    tree_file.write(', ' * (level + 2) + f"- {event_code}: {event_desc} ({event_date})\n")
-        
-                    #    # Write additional text information if available
-                    #    for text in event_texts:
-                    #        tree_file.write(', ' * (level + 3) + f"{text.strip()}\n")
-            
-                    self.process_legal_events({'legal_events': sibling[s]['evnt']}, level, tree_file)
+            for s in range(1, sibling['0'] + 1):
+                root_an = current_root.get('root_an', '')
+                root_ap = current_root.get('root_ap', '')
+                # print("root_an, root_ap, current_root:", root_an, root_ap, current_root)
+                # print("sibling[s]['s']:", sibling[s]['s'])
+                if sibling[s]['s'] not in [root_an, root_ap] and sibling[s]['s'] not in processed_nodes: 
+                    tree_label = '' # tree_label = "(default tree)" if mode == "application" else "(alternative tree)"
                     
-                elif self.initFlag in process_methods:
-                    sibling_dict = {'root_pn': sibling[s]['pn']}
-                    process_methods[self.initFlag](sibling_dict, level, tree_file)                
-   
-                # Recursive call with depth control           
-                child_node = sibling[s]['ap']
-                # print("child_node:", child_node)
-                # print("processed_apps:", processed_apps)
-                # It recursively processes children nodes until all nodes are processed.
-                if child_node.strip() and child_node not in processed_apps:
-                    # print(f"Generating tree for: {child_node} at level {level}")
-                    # Recursively call tree_generation for the child node.
-                    self.tree_generation(child_node, level, tree_file, processed_apps)
-        
-        level -= 1
+                    # Write sibling data to the file with appropriate indentation.
+                    if 's' in sibling[s] and sibling[s]['s'].find(rec_inp_right_6) >= 0:
+                        tree_file.write(', ' * level + f"{sibling[s]['s']} {tree_label}\n")
+                    elif 's' in sibling[s] and 'EP' not in sibling[s]['s'] and sibling[s]['an'].find(rec_inp_right_6) >= 0:
+                        tree_file.write(', ' * level + f"{sibling[s]['an']} {tree_label}\n")
+                    else:
+                        tree_file.write(', ' * level + f"{sibling[s]['s']} {tree_label}\n")
+
+                    # Mapping initFlag values to corresponding methods.
+                    process_methods = {
+                        'Show_publications': self.process_publications,
+                        'Show_citations': self.process_citations,
+                        'Show_classifications': self.process_classifications,
+                        'Show_parties': self.process_parties,
+                        'Show_images': self.process_images
+                    }
+
+                    # Call specific methods based on the initFlag.
+                    if self.initFlag == 'Show_priorities':
+                        self.process_priorities(sibling[s]['pr'], level, tree_file)
+                    elif self.initFlag == 'Show_applications':
+                        self.process_applications(sibling[s]['ap'], level, tree_file)
+                    elif self.initFlag == 'Show_parents':
+                        self.process_parents(sibling[s]['orap'], level, tree_file)
+                    elif self.initFlag == 'Show_legal_events' and sibling[s]['evnt'] and sibling[s]['evnt'] != []:
+                        # self.process_legal_events('', level, tree_file)
+                        self.process_legal_events({'legal_events': sibling[s]['evnt']}, level, tree_file)
+                    elif self.initFlag in process_methods:
+                        sibling_dict = {'root_pn': sibling[s]['pn']}
+                        process_methods[self.initFlag](sibling_dict, level, tree_file)
+
+                    # Recursive call for child nodes.
+                    child_node = sibling[s]['ap'].strip()
+                        
+                    # print()
+                    # print("child_node:", child_node)
+                    # print("processed_nodes:", processed_nodes)
+                    # It recursively processes children nodes until all nodes are processed.                    
+                    if child_node and child_node not in processed_nodes:
+                        # print(f"Generating tree for: {child_node} and at level {level}")
+                        # print(f"Recursing into: {child_node}, Level: {level}, Processed: {processed_nodes}")
+                        # Recursively call generate_tree for the child node.
+                        self.generate_tree(child_node, level, tree_file, processed_nodes, current_root, mode)
+
+            level -= 1
         return level, sibling
-    
+        
     def process_generic(self, current_root, level, tree_file, key, formatter=None):
         """
         Process and write data from the current root node to the tree file.
@@ -357,13 +374,10 @@ class TreeProcessor:
                 data: The data to write, which can be a string, list, or dictionary.
                 level: The current level of recursion used to control the depth (indentation) of the output.
                 formatter: A function used to format the data before writing. If not provided, raw data is written.                
-            """
-            indent = ". " * (level + 1)
-            # print("dataType:", type(data))
-            # print(data)
-            # print()
+            """      
             # Handle string data
-            if isinstance(data, str):              
+            if isinstance(data, str):
+                indent = ". " * level
                 tree_file.write(f'{indent}{formatter(data) if formatter else data}\n')
             # Handle list data (process each item recursively)
             elif isinstance(data, list):
@@ -371,32 +385,88 @@ class TreeProcessor:
                     # print("formatter:", formatter)
                     # print("myKey:", myKey)
                     if myKey == 'root_pr':
-                        tree_file.write(f'{indent}- Prio {index + 1}:\n')
+                        # tree_file.write(f'{indent}- Prio {index + 1}:\n')
                         write_data(item, level + 1, formatter)
                     elif myKey == 'root_evnt':
-                        tree_file.write(f'{indent}- Event {index + 1}:\n')
-                        write_data(item, level + 1, formatter)                        
+                        # tree_file.write(f'{indent}- Event {index + 1}:\n')
+                        write_data(item, level + 1, formatter)
                     else:
                         # print("item:", item)                        
                         # tree_file.write(f'{indent}- Item {index + 1}:\n')
                         write_data(item, level + 1, formatter)
             # Handle dictionary data (formatting option provided)
             elif isinstance(data, dict):
+                myDescFlag = False
                 for key, value in data.items():
                     if key in {'code', 'desc'}:
                         # print("key:", key)
-                        # print("value:", value)                        
-                        # tree_file.write(f'{indent}{key}:\n')
-                        write_data(f'{indent}{key}:{value}', level + 1, formatter)
+                        # print("value:", value)
+                        if key == 'code' and value == 'DFPE':
+                            myDescFlag = True
+                        elif myDescFlag:
+                            write_data(f'{key}:{value}', level + 1, formatter)     
                     elif key not in {'nested_data', 'dateMigr', 'infl', 'texts'}:
                         # print("key:", key)
                         # print("value:", value)
-                        # tree_file.write(f'{indent}{key}:\n')
-                        write_data(f'{indent}{key}:{value}', level + 1, formatter)                        
+                        # tree_file.write(f'{key}:\n')
+                        write_data(f'{key}:{value}', level + 1, formatter)                            
             else:
+                indent = ". " * level
                 tree_file.write(f'{indent}{formatter(data) if formatter else str(data)}\n')    
             return
-            
+
+# def write_data(data, level, myKey, formatter=None):
+#     """
+#     Helper function to recursively write data to the tree file.
+#     It handles different data types (str, list, dict) and applies formatting if a formatter is provided.
+
+#     Args:
+#         data: The data to write, which can be a string, list, or dictionary.
+#         level: The current level of recursion used to control the depth (indentation) of the output.
+#         myKey: A key indicating the type of data being processed (e.g., 'root_evnt').
+#         formatter: A function used to format the data before writing. If not provided, raw data is written.
+#     """
+    
+#     # Handle string data
+#     if isinstance(data, str):
+#         indent = ". " * level
+#         tree_file.write(f'{indent}{formatter(data) if formatter else data}\n')
+
+#     # Handle list data (process each item recursively)
+#     elif isinstance(data, list):
+#         for index, item in enumerate(data):
+#             if myKey == 'root_pr':
+#                 write_data(item, level + 1, myKey, formatter)
+#             elif myKey == 'root_evnt':
+#                 if formatter:
+#                     formatted_event = formatter({'legal_events': [item]})  # Apply formatter to a single event
+#                     write_data(formatted_event, level, myKey, formatter)
+#                 else:
+#                     write_data(item, level + 1, myKey, formatter)
+#             else:
+#                 write_data(item, level + 1, myKey, formatter)
+
+#     # Handle dictionary data (formatting option provided)
+#     elif isinstance(data, dict):
+#         if myKey == 'root_evnt':
+#             if formatter:
+#                 formatted_event = formatter({'legal_events': [data]})  # Apply formatter to a single event
+#                 write_data(formatted_event, level, myKey, formatter)
+#             else:
+#                 write_data(data, level + 1, myKey, formatter)
+#         else:
+#             for key, value in data.items():
+#                 if key not in {'nested_data', 'dateMigr', 'infl', 'texts'}:
+#                     write_data(f'{key}: {value}', level + 1, myKey, formatter)
+
+#     # Handle other types of data
+#     else:
+#         indent = ". " * level
+#         tree_file.write(f'{indent}{formatter(data) if formatter else str(data)}\n')
+
+#     return
+
+        
         # Main logic to extract the relevant data from current_root and process it
         if isinstance(current_root, dict): # instead of dict only
             # Retrieve the data corresponding to the provided key from current_root
@@ -481,7 +551,6 @@ class TreeProcessor:
             # return None  # Skip adding this field if it's empty
             event_data = 'No legal events available.'
             return event_data
-            
 
         # If event_data is a dictionary, format each legal event in the list
         if isinstance(event_data, dict) and 'legal_events' in event_data:
@@ -493,14 +562,67 @@ class TreeProcessor:
                 event_infl = event.get('legal_event_infl', 'No Influence')
 
                 # Construct the formatted string for each event
-                formatted_events.append(f"{event_type} on {event_date}: {event_desc} ({event_infl}) [{event_texts}]")
+                formatted_events.append(f"{event_type}: {event_desc}")
+                # formatted_events.append(f"{event_type} on {event_date}: {event_desc} ({event_infl}) [{event_texts}]")
             return '\n'.join(formatted_events)
         
         # For other types of data, convert them to a string representation
         return str(event_data)
 
-                    # tree_file.write(', ' * (level + 1) + "legal_events:\n")  # Add header for legal events
-                    
+# def format_legal_events(self, event_data, level=0, tree_file=None):
+#     """
+#     Format legal event data into a readable string and optionally write to a tree file.
+
+#     Args:
+#         event_data (dict or any): Data containing legal event information.
+#         level (int): Indentation level for tree file formatting.
+#         tree_file (file object, optional): File object where formatted data should be written.
+
+#     Returns:
+#         str: A formatted string representing the legal event data, or a default message if no data is available.
+#     """
+#     # Return default message if no legal event data is available
+#     if not event_data or (isinstance(event_data, dict) and 'legal_events' in event_data and not event_data['legal_events']):
+#         return 'No legal events available.'
+
+#     formatted_events = []
+
+#     # Process legal event data if it is a dictionary containing 'legal_events'
+#     if isinstance(event_data, dict) and 'legal_events' in event_data:
+#         for event in event_data['legal_events']:
+#             event_code = event.get('legal_event_code', 'Unknown Event')
+#             event_date = event.get('legal_event_date_migr', 'Unknown Date')
+#             event_desc = event.get('legal_event_desc', 'No Description')
+#             event_infl = event.get('legal_event_infl', 'No Influence')
+#             event_texts = event.get('texts', '').split('|')  # Split multiple texts if needed
+
+#             dfpe_flag = False
+#             event_details = []
+
+#             # Extract relevant fields
+#             for key, value in event.items():
+#                 if key == 'code' and value == 'DFPE':
+#                     dfpe_flag = True  # Flag that DFPE event was encountered
+#                 elif key == 'desc' and dfpe_flag:
+#                     event_details.append(f"{key}: {value}")
+#                 elif key not in {'nested_data', 'dateMigr', 'infl', 'texts'}:
+#                     event_details.append(f"{key}: {value}")
+
+#             # Construct formatted event string
+#             formatted_event_str = f"- {event_code}: {event_desc} ({event_date})"
+#             if event_details:
+#                 formatted_event_str += "\n  " + "\n  ".join(event_details)
+
+#             formatted_events.append(formatted_event_str)
+
+#             # Write to tree file if provided
+#             if tree_file:
+#                 tree_file.write(', ' * (level + 2) + formatted_event_str + "\n")
+#                 for text in event_texts:
+#                     tree_file.write(', ' * (level + 3) + f"{text.strip()}\n")
+
+#     return '\n'.join(formatted_events) if formatted_events else 'No legal events available.'
+    
                     # for event in sibling[s]['evnt']:
                     #     event_code = event.get('code', 'N/A')
                     #     event_desc = event.get('desc', 'No Description')
@@ -513,7 +635,7 @@ class TreeProcessor:
                     #    # Write additional text information if available
                     #    for text in event_texts:
                     #        tree_file.write(', ' * (level + 3) + f"{text.strip()}\n")
-                           
+    
     def process_legal_events(self, current_root, level, tree_file):
         """
         Process and write legal event data from the current root node to the tree file.

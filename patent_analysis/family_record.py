@@ -10,18 +10,20 @@ from patent_analysis.helpers import convert_japanese_priority_number, sort_orap
 from pprint import pprint
 import logging
 # logging.basicConfig(level=logging.DEBUG)
-
-# # Set display options for pandas
-# pd.set_option('display.max_rows', None)  # Display all rows
-# pd.set_option('display.max_columns', None)  # Display all columns
-# pd.set_option('display.width', None)  # Avoid line wrapping
-# pd.set_option('display.max_colwidth', None)  # Show full column content
+        
+# Set display options for pandas
+pd.set_option('display.max_rows', None)  # Display all rows
+pd.set_option('display.max_columns', None)  # Display all columns
+pd.set_option('display.width', None)  # Avoid line wrapping
+pd.set_option('display.max_colwidth', None)  # Show full column content
 
 class FamilyRecord:
     """
     Represents family record in the European Patent Office (EPO) database.
     Provides methods to fetch, parse, and process patent family data.
     """
+    _print_executed = False
+    
     # Put more fundamental/lower-level methods earlier in the class definition:
     def __init__(self, reference_type: str, doc_number: str, country: Optional[str] = None, kind: Optional[str] = None, constituents: Optional[str] = None, countrySelection=None, output_type: Optional[str] = None, ):  
         """
@@ -51,12 +53,13 @@ class FamilyRecord:
         self.familyRoot = None
         self.xml_tree = None
         self.data = {}  # Initialize the data attribute
+        self.pd = pd  # Assign pandas to self.pd
         self.df, self.DropdownCC = self._initialize_dataframe()
         if self.df is not None:
             self.df['source_doc_number'] = self.source_doc_number
         else:
             print("Error: DataFrame is empty or failed to initialize.")
-            
+        
     def compute_source_doc_number(self, doc_number: str, country: str, kind: Optional[str]) -> str:
         """
         Compute the source document number by concatenating country code, document number, and kind code.
@@ -227,9 +230,9 @@ class FamilyRecord:
                 'app_country': app_country_text,
                 'app_kind': app_kind_text,
                 'app_date': app_date_text,
-                'priority_numbers': set(),   # Placeholder for priority numbers
-                'orap': set(),               # Placeholder for other application references
-                'priority_dates': {},        # Placeholder for priority dates
+                'priority_numbers': [],   # Placeholder for priority numbers
+                'orap': {},               # Placeholder for other application references
+                'priority_dates': {},     # Placeholder for priority dates
                 'pub_number': '',
                 'pub_country': '',
                 'pub_kind': '',
@@ -237,18 +240,18 @@ class FamilyRecord:
                 'legal_events': []
             }
 
-        return app_number_full, app_data, app_kind_text
+        return app_number_full, app_data, app_kind_text, app_country_text
         
     # Sorting function
     def custom_sort_key(self, item):
-        if 'W' in item:
+        if len(item) > 2 and item[2] == 'W':  # Check if 'W' is in the third position
             return (0, item)  # Highest priority
         elif 'EP' in item:
             return (1, item)  # Second priority
         else:
             return (2, item)  # Lowest priority
             
-    def _parse_priority_claims(self, family_member, nsmap, data, app_number_full, app_data, app_kind_text):
+    def _parse_priority_claims(self, family_member, nsmap, data, app_number_full, app_data, app_kind_text, app_country_text):
         """
         Extracts application details such as country, kind, number, and date.
 
@@ -258,7 +261,8 @@ class FamilyRecord:
 
         Returns:
         - Tuple[Optional[str], Dict[str, Any], Optional[str]]: Application number, application data, and kind text.
-        """        
+        """
+        processed_prios = set()
         for priority_claim in family_member.findall(f".//{self.get_ns_prefix('exchange:priority-claim', nsmap)}"):
             elements = { 
                 key: priority_claim.find(f".//{self.get_ns_prefix(f'exchange:{key}', nsmap)}")
@@ -278,38 +282,81 @@ class FamilyRecord:
                 if priority_kind == 'W':
                     priority_doc_number_full = f"{priority_country}{priority_kind}{priority_doc_number}"
             
-                priority_doc_number_full = convert_japanese_priority_number(priority_doc_number_full)
-
+                priority_doc_number_full = convert_japanese_priority_number(priority_doc_number_full)               
+                
                 if app_number_full in data:
-                    # Ensure 'orap' and 'priority_numbers' are sets
-                    if not isinstance(app_data.get('orap'), set):
-                        app_data['orap'] = set(app_data.get('orap', []))
-                    if not isinstance(app_data.get('priority_numbers'), set):
-                        app_data['priority_numbers'] = set(app_data.get('priority_numbers', []))
+                    # Ensure 'priority_numbers' is a list and append to it
+                    if not isinstance(app_data.get('priority_numbers'), list):
+                        app_data['priority_numbers'] = []
+                        
+                    if 'orap' not in app_data:
+                        app_data['orap'] = {}            
                     if 'priority_dates' not in app_data:
                         app_data['priority_dates'] = {}
                         
-                    if priority_doc_number_full not in app_data['orap']:
+                    if (priority_doc_number_full not in app_data['priority_dates']) or (
+                        priority_date and priority_date > app_data['priority_dates'][priority_doc_number_full]
+                    ):
+                        # Update the latest priority date
+                        app_data['priority_dates'][priority_doc_number_full] = priority_date
+
+                    # **Sort priority dates by date in ascending order**
+                    app_data['priority_dates'] = dict(sorted(app_data['priority_dates'].items(), key=lambda x: x[1], reverse=True))
+
+                    # # **Select the latest priority_doc_number_full**
+                    # latest_priority_doc_number = next(iter(app_data['priority_dates']), None)  # Get the first key (latest date)
+
+                    # **Sort priority dates by date in descending order (latest first)**
+                    sorted_priority_dates = sorted(app_data['priority_dates'].items(), key=lambda x: x[1], reverse=True)
+
+                    # print("app_number_full:", app_number_full)
+                    # print("app_data['priority_dates']:", app_data['priority_dates'])
+
+                    if priority_doc_number_full not in processed_prios and priority_doc_number_full not in app_data['orap']:
+                        # print("out: app_number_full + priority_doc_number_full:", app_number_full, priority_doc_number_full)
+                        # print("app_country_text, priority_country:", app_country_text, priority_country)
                         if app_kind_text == 'W' or priority_country == 'EP' or (
                             len(priority_doc_number_full) >= 3 and priority_doc_number_full[2] == 'W'
                         ):
-                            app_data['priority_numbers'].add(priority_doc_number_full)
-                            app_data['priority_dates'][priority_doc_number_full] = priority_date
-
+                            # print("in first condition : app_number_full + priority_doc_number_full:", app_number_full, priority_doc_number_full)
+                            if priority_doc_number_full not in app_data['priority_numbers']:
+                                app_data['priority_numbers'].append(priority_doc_number_full)
+                                
                             if priority_country == 'EP' or (
                                 len(priority_doc_number_full) >= 3 and priority_doc_number_full[2] == 'W'
                             ):
-                                app_data['orap'].add(priority_doc_number_full)
-                            elif app_kind_text == 'W':
-                                app_data['orap'].add(app_number_full)
+                                # **Select the latest priority_doc_number_full**
+                                if sorted_priority_dates:
+                                    latest_priority_doc_number = sorted_priority_dates[0][0]  # Get the key with the latest date
+                                    app_data['orap'] = latest_priority_doc_number  # Assign the latest priority to 'orap'
+                                # print("Selected latest priority_doc_number_full for 'orap':", app_data.get('orap'))
+                                # app_data['orap'] = priority_doc_number_full
+                                processed_prios.add(latest_priority_doc_number)
                                 
-                            app_data['priority_numbers'] = sorted(app_data['priority_numbers'], key=self.custom_sort_key)
-                            app_data['orap'] = sorted(app_data['orap'], key=self.custom_sort_key)
-                            # print("priority_doc_number + priority_doc_number_full + app_number_full + app_data['priority_numbers'] + app_data['orap']:", priority_doc_number, priority_doc_number_full, app_number_full, app_data['priority_numbers'], app_data['orap'])                            
-                        # elif priority_country != 'EP':
-                        #     app_data['priority_numbers'].add(priority_doc_number_full)                            
-                        #     app_data['orap'].add(priority_doc_number_full) 
-                        # print("priority_doc_number + priority_doc_number_full + app_number_full + app_data['priority_numbers'] + app_data['orap']:", priority_doc_number, priority_doc_number_full, app_number_full, app_data['priority_numbers'], app_data['orap'])
+                            elif app_kind_text == 'W':
+                                app_data['orap'] = app_number_full
+                                processed_prios.add(app_number_full)
+                                
+                        elif app_country_text != 'EP' and app_number_full != priority_doc_number_full and priority_country != 'EP':
+                            # print("out: app_number_full + priority_doc_number_full:", app_number_full, priority_doc_number_full)
+                            # print("app_country_text, priority_country:", app_country_text, priority_country)
+                            if not app_data['priority_numbers'] and not app_data['orap']:
+                                # print("in second condition :")
+                                # print("1. app_data['priority_numbers']", app_data['priority_numbers'])
+                                # print("1. app_data['orap']:", app_data['orap'])
+                                processed_prios.add(priority_doc_number_full)                                
+                                if priority_doc_number_full not in app_data['priority_numbers']:
+                                    app_data['priority_numbers'].append(priority_doc_number_full)
+                                if not app_data['orap']:
+                                    app_data['orap'] = [priority_doc_number_full]
+                                # print("2. app_data['priority_numbers']", app_data['priority_numbers'])
+                                # print("2. app_data['orap']:", app_data['orap'])
+                            # else:
+                            #     print("3. app_data['priority_numbers']", app_data['priority_numbers'])
+                            #     print("3. app_data['orap']:", app_data['orap'])                       
+
+                    # print("End of loop")
+                    # print()
 
     def _parse_publication_data(self, family_member, nsmap, data, app_number_full, app_data, country_codes):
         """
@@ -362,8 +409,8 @@ class FamilyRecord:
                 'legal_event_texts': [pre.text.strip() for pre in legal_event.findall('.//{http://ops.epo.org}pre') if pre.text],
                 'nested_data': None  # Ensures 'nested_data' exists
             }
-
             if app_number_full in data:
+                # print("legal_event_data:", legal_event_data)
                 app_data['legal_events'].append(legal_event_data)
 
     def _process_family_member(self, family_member: ET.Element, nsmap: Dict[str, str], data: Dict, country_codes: Set[str]):
@@ -376,17 +423,25 @@ class FamilyRecord:
         - data (Dict[str, Any]): The data dictionary to update with parsed information.
         - country_codes (Set[str]): A set to track country codes.
         """
-        app_number_full, app_data, app_kind_text = self._extract_application_data(family_member, nsmap)
+        app_number_full, app_data, app_kind_text, app_country_text = self._extract_application_data(family_member, nsmap)
     
         if not app_number_full:
             return  # Skip processing if no valid application data
 
         data[app_number_full] = app_data
         country_codes.add(app_data['app_country'])
-        data[app_number_full]['priority_numbers'].update(app_data.get('priority_numbers', set()))
-        data[app_number_full]['orap'].update(app_data.get('orap', set()))
+        
+        if isinstance(data[app_number_full]['priority_numbers'], list):
+            data[app_number_full]['priority_numbers'].extend(app_data.get('priority_numbers', []))
+        else:
+            data[app_number_full]['priority_numbers'].update(app_data.get('priority_numbers', set()))
+
+        if isinstance(data[app_number_full]['orap'], list):
+            data[app_number_full]['orap'].extend(app_data.get('orap', []))
+        else:
+            data[app_number_full]['orap'].update(app_data.get('orap', set()))
     
-        self._parse_priority_claims(family_member, nsmap, data, app_number_full, app_data, app_kind_text)
+        self._parse_priority_claims(family_member, nsmap, data, app_number_full, app_data, app_kind_text, app_country_text)
         self._parse_publication_data(family_member, nsmap, data, app_number_full, app_data, country_codes)
         self._parse_legal_events(family_member, nsmap, data, app_number_full, app_data)
 
@@ -406,8 +461,8 @@ class FamilyRecord:
                 'app_country': country,
                 'app_kind': None,
                 'app_date': None,
-                'priority_numbers': set(),
-                'orap': set(),
+                'priority_numbers': [],
+                'orap': {},
                 'orap_history': [],
                 'priority_dates': {},
                 'legal_events': []
@@ -442,7 +497,7 @@ class FamilyRecord:
             print("Warning: DataFrame is empty after filtering out 'Unknown0000000'.")
     
         return df
-
+    
     def _parse_xml_to_dataframe(self) -> Optional[pd.DataFrame]:
         """Parses the XML, processes family members, and returns a DataFrame."""
         self.familyRoot = self._parse_xml()
@@ -456,8 +511,8 @@ class FamilyRecord:
             'app_country': '',
             'app_kind': None,
             'app_date': None,
-            'priority_numbers': set(),
-            'orap': set(),
+            'priority_numbers': [],
+            'orap': {},
             'orap_history': [],
             'priority_dates': {},
             'legal_events': []
@@ -465,7 +520,9 @@ class FamilyRecord:
         country_codes = set()
     
         family_members = self._get_family_members()
-        print(f"Extracted {len(family_members)} family members in the parsed XML.")
+        if not FamilyRecord._print_executed:
+            print()
+            print(f"Extracted {len(family_members)} family members in the parsed XML.")
 
         for family_member in family_members:
             self._process_family_member(family_member, nsmap, data, country_codes)
@@ -491,11 +548,14 @@ class FamilyRecord:
                     app_number_full = row['app_number']
                     if app_number_full not in self.data:
                         self.data[app_number_full] = {
-                            'orap': set(),
-                            'priority_numbers': set(),
+                            'orap': {},
+                            'priority_numbers': [],
                             'priority_dates': {}
                         }
-                print(f"Extracted {len(self.df)} family members in the parsed dataframe.")
+                if not FamilyRecord._print_executed:                        
+                    print(f"Extracted {len(self.df)} family members in the parsed dataframe.")
+                    print()
+                    FamilyRecord._print_executed = True
             else:
                 print("Error: DataFrame is empty after parsing XML.")
                 return self.pd.DataFrame(), []
@@ -503,7 +563,8 @@ class FamilyRecord:
             # Debugging for the environment
             try:
                 from IPython.display import display
-                # display(self.df)  # to use in priority for df display
+                # print("_initialize_dataframe:")
+                # display(self.df)  # to use in priority for self.df display
             except ImportError:
                 print(self.df.head())  # Fallback for non-Jupyter environments
 
@@ -520,65 +581,91 @@ class FamilyRecord:
 
     def _extract_application_data(self, family_member: ET.Element, nsmap: Dict[str, str]) -> Tuple[Optional[str], Dict, Optional[str]]:
         """Extracts application data and returns a tuple (app_number_full, app_data, app_kind_text)."""
-        app_number_full, app_data, app_kind_text = self._parse_application_data(family_member, nsmap)
+        app_number_full, app_data, app_kind_text, app_country_text = self._parse_application_data(family_member, nsmap)
     
         if not app_number_full:
             print("Skipping family member: No app_number_full")
             return None, {}, None
     
         app_data['app_country'] = app_data.get('app_country', 'Unknown')  # Ensure app_country is set  
-        return app_number_full, app_data, app_kind_text            
+        return app_number_full, app_data, app_kind_text, app_country_text
 
     def get_filtered_application_numbers(self, additional_countries: Optional[str] = None) -> Optional[pd.DataFrame]:
-        if self.df is not None:
-            if additional_countries is None:
-                additional_countries = []    
+        if self.df is None:
+            return None
 
-            if 'app_country' not in self.df.columns:
-                print("Column 'app_country' is missing from the DataFrame.")
-                return pd.DataFrame()  # Handle appropriately
+        if 'app_country' not in self.df.columns:
+            print("Column 'app_country' is missing from the DataFrame.")
+            return pd.DataFrame()  # or handle appropriately
 
-            # Define conditions for filtering
-            condition_ep = (self.df['app_country'] == 'EP') & (self.df['app_kind'] == 'A')
-            condition_jp = (self.df['app_country'] == 'JP') & (
-                (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$', regex=True)
-            )
-            condition_us = (self.df['app_country'] == 'US') & (
-                (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$', regex=True)
-            )
-
-            # # Initialize condition_xx safely
-            # condition_xx = False
-            # Initialize condition_xx safely to avoid errors
-            condition_xx = pd.Series(False, index=self.df.index)  
+        additional_countries = additional_countries or []  # Ensure it's a list
         
-            # if self.countrySelection:
-            #     condition_xx = self.df['app_country'].isin(self.countrySelection)
-            # if additional_countries:
-            #     condition_xx |= self.df['app_country'].isin(additional_countries)
+        # Define region-based country groups
+        country_groups = {
+            "europe": [
+                'AL', 'AT', 'BE', 'BG', 'CH', 'CY', 'CZ', 'DE', 'DK', 'EE', 'ES', 'FI', 'FR', 'GB', 'GR', 'HR', 'HU', 'IE', 
+                'IS', 'IT', 'LI', 'LT', 'LU', 'LV', 'MC', 'MT', 'NL', 'NO', 'PL', 'PT', 'RO', 'RS', 'SE', 'SI', 'SK', 'SM', 
+                'TR', 'MK', 'BY', 'MD', 'RU', 'UA'
+            ],
+            "asia": [
+                'JP', 'CN', 'KR', 'TW', 'HK', 'MO', 'SG', 'TH', 'MY', 'PH', 'VN', 'ID', 'BN', 'KH', 'LA', 'MM', 'IN', 'PK', 
+                'BD', 'LK', 'NP', 'BT', 'MV', 'KZ', 'UZ', 'KG', 'TJ', 'TM', 'AE', 'SA', 'IL', 'TR', 'IR', 'QA', 'KW', 'BH', 
+                'OM', 'JO', 'LB', 'SY', 'YE', 'IQ', 'PS', 'AU', 'NZ', 'PG', 'FJ'
+            ],
+            "americas": [
+                'US', 'CA', 'MX', 'GT', 'BZ', 'SV', 'HN', 'NI', 'CR', 'PA', 'CU', 'DO', 'HT', 'JM', 'TT', 'BB', 'BS', 'LC', 
+                'GD', 'KN', 'AG', 'VC', 'DM', 'BR', 'AR', 'CO', 'CL', 'PE', 'VE', 'EC', 'BO', 'PY', 'UY', 'GY', 'SR', 'GF'
+            ],
+            "africa": [
+                'DZ', 'EG', 'LY', 'MA', 'SD', 'TN', 'BJ', 'BF', 'CV', 'CI', 'GH', 'GM', 'GN', 'GW', 'LR', 'ML', 'MR', 'NE', 
+                'NG', 'SN', 'SL', 'TG', 'AO', 'CM', 'CF', 'TD', 'CG', 'CD', 'GQ', 'GA', 'ST', 'BI', 'DJ', 'ER', 'ET', 'KE', 
+                'MG', 'MW', 'MU', 'MZ', 'RW', 'SC', 'SO', 'TZ', 'UG', 'ZM', 'ZW', 'BW', 'LS', 'NA', 'SZ', 'ZA'
+            ]
+        }
+
+        # Define filtering function
+        def filter_by_region(region, exclude_second_w=False):
+            condition = self.df['app_country'].isin(country_groups[region])
+            if exclude_second_w:
+                condition &= ~self.df['app_country'].str[1].eq('W')  # Exclude where 'W' is second letter
+            condition &= (self.df['app_kind'] == 'W') | self.df['app_number'].str.contains(r'W$|W.*$', regex=True)
+            return condition
         
-            # Handle country selection properly
-            selected_countries = set(self.countrySelection or []) | set(additional_countries)
-            if selected_countries:
-                condition_xx = self.df['app_country'].isin(selected_countries)
-            
-            # Apply filters and create a copy to avoid SettingWithCopyWarning
-            filtered_df = self.df[condition_ep | condition_jp | condition_us | condition_xx].copy()
+        # Define main conditions
+        condition_xx = condition_cn = condition_ep = condition_jp = condition_us = condition_wo = False
+        
+        # condition_cn = (self.df['app_country'] == 'CN') & (self.df['app_kind'] == 'A')        
+        condition_ep = (self.df['app_country'] == 'EP') & (self.df['app_kind'] == 'A')
+        # condition_jp = (self.df['app_country'] == 'JP') & (self.df['app_kind'] == 'A')
+        # condition_us = (self.df['app_country'] == 'US') & (self.df['app_kind'] == 'A')        
+        condition_wo = (self.df['app_country'] == 'WO') & (self.df['app_kind'] == 'A')
 
-            # Ensure 'orap' and 'orap_history' columns exist
-            filtered_df.loc[:, 'orap'] = None
-            filtered_df.loc[:, 'orap_history'] = None
+        condition_europe = filter_by_region("europe")
+        condition_asia = filter_by_region("asia", exclude_second_w=True)
+        condition_americas = filter_by_region("americas")
+        condition_african = filter_by_region("africa", exclude_second_w=True)
 
-            if not filtered_df.empty:
-                filtered_df = filtered_df.apply(
-                    lambda row: sort_orap(row, self.ccw_to_wo_mapping, self.data), 
+        # Handle user-defined country selection
+        selected_countries = set(self.countrySelection or []) | set(additional_countries)
+        condition_xx = self.df['app_country'].isin(selected_countries) if selected_countries else pd.Series(False, index=self.df.index)
+
+        # Apply filters and return the filtered DataFrame
+        filtered_df = self.df[
+            condition_cn | condition_ep | condition_jp | condition_us | condition_wo | condition_xx # | condition_europe | condition_asia | condition_americas | condition_african
+           # condition_cn | condition_ep | condition_jp | condition_us | condition_wo | condition_xx | condition_europe | condition_asia | condition_americas | condition_african
+        ].copy()
+                
+        # Ensure 'orap' and 'orap_history' columns exist
+        filtered_df.loc[:, 'orap'] = None
+        filtered_df.loc[:, 'orap_history'] = None
+
+        if not filtered_df.empty:
+            filtered_df = filtered_df.apply(
+                lambda row: sort_orap(row, self.ccw_to_wo_mapping, self.data), 
                     axis=1
-                )
+            )
 
-            return filtered_df  
-
-        return None
-
+        return filtered_df  
     
     def process_fami_record(self, additional_countries: Optional[str] = None) -> None:
         """
@@ -587,11 +674,11 @@ class FamilyRecord:
 
         Returns:
         - Optional[Tuple[pd.DataFrame, str]]: Tuple containing the filtered DataFrame and the source type, or None if no data.
-        """        
-        # print("process_fami_record with additional_countries:", additional_countries)
+        """
+
+        print("process_fami_record with additional_countries:", additional_countries)
         source = 'Epodoc' if self.kind is None else 'Docdb'
 
-        # Example usage:
         # Use the method to get filtered publication numbers
         result = self.get_filtered_application_numbers(additional_countries)
         if result is not None and not result.empty:
@@ -601,58 +688,3 @@ class FamilyRecord:
         else:
             print("DataFrame is empty. No data to process.")
             return None
-
-    def convert_to_hashable(self, value):
-        """
-        Convert the given value to a hashable type.
-        """
-        if isinstance(value, dict):
-            # Convert dictionary to a sorted tuple of (key, value) tuples
-            return tuple(sorted((k, self.convert_to_hashable(v)) for k, v in value.items()))
-        elif isinstance(value, (list, set)):
-            # Convert list or set to a sorted tuple
-            return tuple(sorted(self.convert_to_hashable(x) for x in value))
-        else:
-            # Return the value as is if it's already hashable
-            return value
-
-    # def updateFamily(self) -> None:
-    #     """
-    #     Update the FamilyRecord with new data.
-    #     """     
-    #     # print("Update FamilyRecord")
-    #     try:
-    #         # Fetch XML Tree
-    #         self.xml_tree = self._fetch_xml_tree(self.reference_type, self.doc_number, self.country, self.kind, self.constituents) # self.output_type
-    #         if self.xml_tree is None:
-    #             return pd.DataFrame(), []
-
-    #         # Parse XML to DataFrame
-    #         self.df, self.Dropdown_cc = self._parse_xml_to_dataframe()
-    #         # display(self.df)
-    #         if self.df is not None and not self.df.empty: # if not df.empty:
-    #             print("DataFrame is not empty. Processing DataFrame...")
-    #             self.df['source_doc_number'] = self.source_doc_number
-
-    #             # Convert all non-hashable types in the DataFrame to hashable types
-    #             for col in self.df.columns:
-    #                 self.df[col] = self.df[col].apply(self.convert_to_hashable)
-
-    #             # Verify if any unhashable objects still exist in the DataFrame
-    #             for col in self.df.columns:
-    #                 unhashable_count = self.df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, (list, set))).sum()
-    #                 if unhashable_count > 0:
-    #                     print(f"Warning: Column '{col}' still contains {unhashable_count} unhashable items.")
-    #                     print("Here are some examples:")
-    #                     print(self.df[col][self.df[col].apply(lambda x: isinstance(x, dict) or isinstance(x, (list, set)))].head())
-
-    #             # Attempt to drop duplicates
-    #             print("Dropping duplicates...")
-    #             self.df = self.df.drop_duplicates()
-
-    #     except Exception as e:
-    #         print(f"Error updating FamilyRecord: {e}")
-    #         import traceback
-    #         print("Traceback:")
-    #         traceback.print_exc()  # This will print the full traceback including the line number
-

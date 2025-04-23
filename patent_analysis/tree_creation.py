@@ -80,14 +80,14 @@ class TreeCreation:
     
         Returns:
         - Dict[str, Any]: Nested dictionary with hierarchical data.
-        """        
+        """
+        print("Tree creation:")
         # Reset index to ensure continuous integer indexing
         df = df.reset_index(drop=True)
 
         # Print DataFrame head and columns for debugging
-        # print("DataFrame head and tail:")
-        # print(df.head(13))
-        # print(df.tail())
+        # print("DataFrame df:")
+        # display(df)
         # print("\nDataFrame Columns:")
         # print(df.columns)
 
@@ -101,7 +101,11 @@ class TreeCreation:
         listAPs = df['app_number'].tolist() # check listAPs from df dataframe before deleting values later
         # print("listAPs:", listAPs)
         # print()
-    
+
+        # listPRs = df['priority_numbers'].tolist() # check listPRs from df dataframe before deleting values later
+        # print("listPRs:", listPRs)
+        # print()
+        
         # Generate listORAPs
         # print("df['orap']:", df['orap'])
         listORAPs = df['orap'].apply(
@@ -113,11 +117,14 @@ class TreeCreation:
 
         # listORAPs = df['orap'].apply(lambda x: x.split()[0] if isinstance(x, str) and x.strip() else None).dropna().tolist()
 
-        # listORAPs contains all oldest applications with potential redundancies
+        # # listORAPs contains all oldest applications with potential redundancies
         # print("listORAPs:", listORAPs) 
 
-        if self.orapNb is not None and int(self.orapNb) > 0:            
-            if self.db in ["EPODOC", "DOCDB"]:                
+        if self.orapNb is not None and int(self.orapNb) > 0:
+            # Initialize root dictionary
+            root = {'0': 0} # Ensure root['0'] is initialized
+            if self.db in ["EPODOC", "DOCDB"]:
+                # First pass: handle the new condition and empty 'orap' values
                 for i in range(len(self.df)):
                     current_row = df.iloc[i]
                     # print(f"Row {i}: {current_row}")  # Print the row to check its content
@@ -130,55 +137,97 @@ class TreeCreation:
                     # print("app_number:", app_number)
                     # Safely handle 'pub_number'
                     pub_number = str(current_row['pub_number']) + str(current_row['pub_kind']) # current_row['pub_number']
-                    # print("pub_number:", pub_number)                    
+                    # print("pub_number:", pub_number)
+                    priority_numbers = current_row['priority_numbers']
+                    # print("priority_numbers:", priority_numbers)
                     # Safely handle 'orap'
                     orap = current_row['orap'].split(' ')[0] if pd.notna(current_row['orap']) and current_row['orap'] else ''
                     # print("orap:", orap)
-                    if (orap == '') and (accession_number != app_number) and ('EP' in accession_number) and ('EP' not in app_number):
+                    if (orap == '') and (accession_number != app_number):
                         for j in range(len(df)):
                             if df.iloc[j]['accession_number'] == accession_number:
                                 df.iloc[i, df.columns.get_loc('orap')] = df.iloc[j]['orap']
                                 break  # Stop searching after finding the match
                                 
-            # Initialize root dictionary
-            root = {'0': 0} # Ensure root['0'] is initialized
-            for i in range(len(df), 0, -1):
-                prior_row = df.iloc[i-1]
-                if i-1 < len(df) and prior_row['app_number'] is not None:                    
-                    # Skip rows where 'accession_number' or 'app_number' is None or invalid
-                    if pd.isna(prior_row['accession_number']) or pd.isna(prior_row['app_number']) or prior_row['app_number'] == "Unknown0000000":
-                        # print(f"Skipping row {i} due to None or invalid values")
-                        continue
+                orapNumber = 0                
+                # Second pass: create root dictionary and handle remaining empty 'orap' values
+                for i in range(len(df), 0, -1):
+                    prior_row = df.iloc[i-1]
+                    # print()
+                    # print("prior_row:", prior_row)
+                    # print("i-1 < len(df):", i-1, len(df), i-1 < len(df))
+                    # print("prior_row['app_number']:", prior_row['app_number'])
+                    if i-1 < len(df) and prior_row['app_number'] is not None:                    
+                        # Skip rows where 'accession_number' or 'app_number' is None or invalid
+                        if pd.isna(prior_row['accession_number']) or pd.isna(prior_row['app_number']) or prior_row['app_number'] == "Unknown0000000":
+                            # print(f"Skipping row {i} due to None or invalid values")
+                            continue
                     
-                    if (pd.notna(prior_row['orap']) and (prior_row['orap'].split(' ')[0] not in listAPs)) or pd.isna(prior_row['orap']) or pd.isnull(prior_row['orap']):                        
-                        r = root['0'] + 1  # Increment root index
-                        root[r] = {
-                            'root_an': prior_row['accession_number'].split(' ')[0] if pd.notna(prior_row['accession_number']) else '',                        
-                            'root_ap': prior_row['app_number'].split(' ')[0] if pd.notna(prior_row['app_number']) else '',
-                            'root_pn': str(prior_row['pub_number']) + str(prior_row['pub_kind']),
-                            'root_pr': prior_row['priority_numbers'],
-                            'root_orap': prior_row['orap'].split(' ')[0] if pd.notna(prior_row['orap']) and prior_row['orap'] else '',
-                            'root_evnt': prior_row['legal_events']  # Include legal events
-                            }
+                        if (pd.notna(prior_row['orap']) and (prior_row['orap'].split(' ')[0] not in listAPs)) or pd.isna(prior_row['orap']) or pd.isnull(prior_row['orap']):    
+                            r = root['0'] + 1  # Increment root index
+                            root[r] = {
+                                'root_an': prior_row['accession_number'].split(' ')[0] if pd.notna(prior_row['accession_number']) else '',                        
+                                'root_ap': prior_row['app_number'].split(' ')[0] if pd.notna(prior_row['app_number']) else '',
+                                'root_pn': str(prior_row['pub_number']) + str(prior_row['pub_kind']),
+                                'root_pr': prior_row['priority_numbers'],
+                                'root_orap': prior_row['orap'].split(' ')[0] if pd.notna(prior_row['orap']) and prior_row['orap'] else '',
+                                'root_evnt': prior_row['legal_events']  # Include legal events
+                                }
 
-                        # print("i and r:", i-1, r)
-                        # print("prior_row['orap']", prior_row['orap'])
+                            # print("i and r:", i-1, r)
+                            # print("prior_row['orap']", prior_row['orap'])
                         
-                        # Ensure i-1 is within the bounds
-                        if i > 0 and prior_row['orap'] == '':
-                            # Use .at for positional access
-                            if df.at[i-1, 'orap'] == '':
-                                # print()
-                                # print("df.at[i-1, 'orap']:", df.at[i-1, 'orap'])
-                                df.at[i-1, 'orap'] = "noOrap" + str(r)  # Using .at for direct label-based assignment
-                                # print("df.at[i-1, 'orap']:", df.at[i-1, 'orap'])
-                                prior_row['orap'] = df.at[i-1, 'orap']  # Update the prior_orap if needed
-                                # print("prior_orap:", prior_orap)
-                                self.orap = df['orap'].tolist()  # Ensure the tree's orap is updated from the DataFrame
+                            # Ensure i-1 is within the bounds
+                            if i > 0 and prior_row['orap'] == '':
+                                # Use .at for positional access
+                                if df.at[i-1, 'orap'] == '':
+                                    # print()
+                                    # print("df.at[i-1, 'orap']:", df.at[i-1, 'orap'])
+                                    priority_numbers = df.at[i-1, 'priority_numbers']
+                                    # Check if it's a list and convert it to a string if necessary
+                                    if isinstance(priority_numbers, list):
+                                        priority_numbers = ','.join(priority_numbers)
+                                        
+                                    # print("df.at[i-1,'accession_number']", df.at[i-1,'accession_number'])
+                                    # print("df.at[i-1,'priority_dates']", df.at[i-1,'priority_dates'])
+                                    # print("priority_numbers:", priority_numbers)
+                                    # print()
+
+                                    # Extract priority numbers from priority_dates if priority_numbers is empty
+                                    if not priority_numbers and isinstance(df.at[i-1, 'priority_dates'], dict):
+                                        priority_numbers = ' '.join(df.at[i-1, 'priority_dates'].keys())
+                                        df.at[i-1, 'priority_numbers'] = priority_numbers  # Directly update dataframe
+                                            
+                                    # Retain only the latest priority number based on the latest priority date
+                                    if isinstance(df.at[i-1, 'priority_dates'], dict) and df.at[i-1, 'priority_dates']:
+                                        priority_numbers = max(df.at[i-1, 'priority_dates'].items(), key=lambda x: x[1])[0]
+    
+                                    # Now you can safely compare and assign values
+                                    if not df.at[i-1, 'orap'] and priority_numbers != '':
+                                        df.at[i-1, 'orap'] = priority_numbers
+                                    else:
+                                        orapNumber += 1
+                                        df.at[i-1, 'orap'] = f"noOrap{orapNumber}"
+        
+                                    # print("df.at[i-1, 'orap']:", df.at[i-1, 'orap'])
+                                    prior_row['orap'] = df.at[i-1, 'orap']  # Update the prior_orap if needed
+                                    # print("prior_orap:", prior_row['orap'])
+                                    # print()
+                                    self.orap = df['orap'].tolist()  # Ensure the tree's orap is updated from the DataFrame
                                 
-                        # Update the dictionary with the latest orap value from DataFrame
-                        root[r]['root_orap'] = df.at[i - 1, 'orap'].split(' ')[0] if df.at[i - 1, 'orap'] else ''
-                        root['0'] = r
+                            # Update the dictionary with the latest orap value from DataFrame
+                            root[r]['root_orap'] = df.at[i - 1, 'orap'].split(' ')[0] if df.at[i - 1, 'orap'] else ''
+                            root['0'] = r
+
+        # print(df[['app_number', 'priority_numbers', 'orap']].head(40))
+
+        # print("df['orap']:", df['orap'])
+        # display(df)
+        
+        listORAPs = df['orap'].apply(lambda x: x.split()[0] if isinstance(x, str) and x.strip() else None).dropna().tolist()
+
+        # listORAPs contains all oldest applications with potential redundancies
+        # print("listORAPs:", listORAPs) 
         
         return root, listAPs, listORAPs, df        
 
