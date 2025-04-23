@@ -4,4 +4,4 @@ This section introduces the notebook's purpose which is to demonstrate the use o
 By leveraging family data from Open Patent Services, OPS, and using the sunburst chart of the Plotly library, familyTree visually offers a spherical, colourful and dynamic representation of an EP / WO patent family including divisional patents and their relationships by branches and by parent-child affiliation, that can be zoomed intuitively. 
 
 EP / WO family tree of the patent application EP09164213 in stock at EPO:
-![](Images/EP09164213 EP only.jpg)
+![](Images/EP09164213_EP_only.jpg)
